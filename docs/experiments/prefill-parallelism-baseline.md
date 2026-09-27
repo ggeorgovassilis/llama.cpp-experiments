@@ -93,12 +93,38 @@ explanation: `prefill-parallelism-analysis.md` section 3.2.
 The 2.4x throughput rise from 512 to 8192 tokens is pipeline overlap plus batch
 efficiency, but it does not reach the ~4x a perfectly balanced, fully overlapped split
 would give. The gap is layer imbalance (GPU3 is ~35% heavier than GPU1/GPU2) and
-pipeline bubbles at the start/end of each prefill - a separate question from the reuse
-barrier issue #8 set out to test.
+pipeline bubbles at the start/end of each prefill. Follow-up: `-ts` layer rebalancing
+does not close this gap (section 6).
 
 ---
 
-## 6. Decisions recorded
+## 6. Layer rebalancing (`-ts`) does not help prefill
+
+Follow-up to the layer-imbalance gap in section 5: does moving layers off GPU3
+with `-ts` raise prefill throughput? No.
+
+Harness: `rig1/scripts/sweep_prefill_ts.sh` (companion to the decode sweep in
+`sweep_ts.sh`). Same six ratios, layer split, K=1, prompt 2048, two iterations,
+best prefill tok/s.
+
+| `-ts` | layers (GPU0..3) | prefill tok/s |
+|---|---|---|
+| 1,1,1,1 (default) | 9,8,8,7 | 95.7 |
+| 9,9,9,6 | 9,9,9,5 | 95.1 |
+| 9,9,10,5 | 9,9,10,4 | 87.7 |
+| 9,10,10,4 | 9,10,10,3 | 88.0 |
+| 10,10,10,3 | 10,10,10,2 | 88.2 |
+| 10,10,11,2 | 10,10,11,1 | 88.2 |
+
+Rebalancing is flat at the mildest step (95.1 vs 95.7, noise) and ~8% worse once
+pushed further. `-ts` moves only intermediate layer boundaries, not the output head,
+which stays pinned to GPU3. Stripping a layer off GPU3 just makes GPU2 the new
+straggler; the pipeline is only as fast as its slowest stage, and the default auto-split
+already compensates for the head (7 layers on GPU3 vs 9 on GPU0). The layer-mode optimum
+is therefore already the default. The only lever that removes the GPU3 straggler is
+sharding the head (`-sm tensor`, issue #10, ~2x prefill).
+
+## 7. Decisions recorded
 
 - `n_predict=1` keeps decode negligible, so `prefill_ms` is the whole story. The
   reuse-off run is therefore a diagnostic for prefill only (reuse-off would hurt decode,
