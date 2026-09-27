@@ -145,6 +145,7 @@ int main(int argc, char ** argv) {
     cparams.n_seq_max = 1;
 
     std::vector<slot> slots(K);
+    const int64_t t_prefill0 = ggml_time_us();
     for (int k = 0; k < K; ++k) {
         slots[k].ctx = llama_init_from_model(model, cparams);
         if (slots[k].ctx == nullptr) {
@@ -163,6 +164,7 @@ int main(int argc, char ** argv) {
         }
         llama_synchronize(slots[k].ctx);
     }
+    const int64_t t_prefill1 = ggml_time_us();
 
     fprintf(stderr, "%s: %d contexts, prompt_tokens=%zu, n_predict=%d, mode=%s\n",
             __func__, K, prompt_tokens.size(), params.n_predict, g_serial ? "serial" : "overlap");
@@ -207,7 +209,8 @@ int main(int argc, char ** argv) {
     const double tok_s = wall_s > 0 ? total_tokens / wall_s : 0.0;
 
     fprintf(stderr, "\n=== results (K=%d, mode=%s) ===\n", K, g_serial ? "serial" : "overlap");
-    fprintf(stderr, "wall=%.3fs total_tokens=%d aggregate_tok_s=%.2f\n", wall_s, total_tokens, tok_s);
+    fprintf(stderr, "prefill_ms=%.1f wall=%.3fs total_tokens=%d aggregate_tok_s=%.2f\n",
+            (t_prefill1 - t_prefill0) / 1e3, wall_s, total_tokens, tok_s);
 
     for (int k = 0; k < K; ++k) {
         const std::string text = tokens_to_str(vocab, slots[k].generated);
