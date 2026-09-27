@@ -13,6 +13,7 @@ This repository is a fork of the original project which attempts at increasing G
 # Issue/Ticket handling
 - This github repository can be used for tracking issues
 - Use the `gh` github cli. It's already logged in and authenticated
+- When the user asks you to close a ticket and/or commit, they mean the full monty: commit, push, document status on the ticket and close.
 
 # Planning
 - Experiment plans are documented in `/docs/experiments`
