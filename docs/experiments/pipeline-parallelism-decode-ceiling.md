@@ -100,10 +100,10 @@ imbalance. In `-sm layer` the vocab projection is a monolithic tensor pinned to 
 and `-ts` cannot rebalance it. Transfer, kernel-launch, and sync drain are all secondary.
 
 The real lever is sharding the output head across GPUs. That is exactly what
-`-sm tensor` does (`output.weight` is configured `GGML_BACKEND_SPLIT_AXIS_1`), but tensor mode
-requires flash-attn, which needs tensor cores - unavailable on Maxwell (sm_50), so it is not
-viable on rig1. For this model on rig1, ~8 tok/s is close to the practical `-sm layer` decode
-ceiling, and no `-ts` value improves it.
+`-sm tensor` does (`output.weight` is configured `GGML_BACKEND_SPLIT_AXIS_1`). The earlier
+claim that tensor mode needs flash-attn/tensor cores and is not viable on rig1 was wrong:
+flash attention falls back to the generic TILE/VEC kernels on sm_50, so `-sm tensor` runs on
+rig1 and lifts decode ~3x. See `pipeline-parallelism-tensor-split.md` (ticket #10).
 
 ## Related
 
