@@ -1,0 +1,23 @@
+# Build image for llama.cpp experiments on rig1.
+# Base matches llama.cpp CI: nvidia/cuda:12.6.2-devel-ubuntu24.04
+# (CUDA 12.6 still compiles sm_50 / Maxwell, which CUDA 13 has dropped).
+FROM nvidia/cuda:12.6.2-devel-ubuntu24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        ninja-build \
+        git \
+        ccache \
+        libssl-dev \
+        libgomp1 \
+        python3 \
+        python3-pip \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CCACHE_DIR=/ccache
+
+WORKDIR /app

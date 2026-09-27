@@ -8,6 +8,7 @@ This repository is a fork of the original project which attempts at increasing G
 - style: be brief and dry
 - language: british english
 - optionality: when explaining something, stick to one topic and option, don't explore multiple branches at the same time
+- When asked a question, the user expects information, not actions (eg. file modifications or deployments). The user will clearly instruct you to undertake actions.
 
 # Issue/Ticket handling
 - This github repository can be used for tracking issues
@@ -34,3 +35,10 @@ This repository is a fork of the original project which attempts at increasing G
 # Building and testing
 - Always build and test on rig1, not here
 - Always build and test inside docker
+- The bespoke build/test env lives in `~/llamacpp-experiments` on rig1. Canonical scripts are in `rig1/{docker,scripts}/` here; deploy with `scp` to rig1. Layout and flag rationale: `rig1/README.md`.
+- Build: `ssh rig1.local 'cd ~/llamacpp-experiments && ./scripts/build.sh'`
+- Test (unit): `ssh rig1.local 'cd ~/llamacpp-experiments && ./scripts/test.sh'`
+- Test (CUDA kernels): `test-backend-ops` is not a ctest; run `ssh rig1.local 'docker run --rm --gpus all -v ~/llamacpp-experiments/build:/build llamacpp-exp-build:12.6.2 /build/bin/test-backend-ops -b CUDA0'`
+- Smoke: `ssh rig1.local 'cd ~/llamacpp-experiments && ./scripts/run.sh'`
+- CPU flags: rig1 is Sandy Bridge (AVX only). `GGML_NATIVE=OFF` defaults AVX2/FMA/F16C/BMI2 ON, which SIGILLs. Set `-DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF`.
+- GPU flags: `-DCMAKE_CUDA_ARCHITECTURES=50` (Maxwell sm_50 only), `-DGGML_CUDA=ON -DGGML_CUDA_CUB_3DOT2=ON`; base image `nvidia/cuda:12.6.2-devel-ubuntu24.04` (CUDA 13 dropped sm_50).
