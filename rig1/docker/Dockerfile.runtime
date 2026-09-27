@@ -1,0 +1,26 @@
+# Runtime image for the llama.cpp experiments on rig1.
+# Bundles the built binaries (llama-server, llama-cli, llama-pipeline, llama-chain)
+# and their shared libs so the image is a standalone deployment artifact, without
+# the build toolchain. The dev/build image (Dockerfile.build) stays the compile
+# environment; this image only runs the results.
+#
+# Base is the CUDA runtime (not devel) to keep the image small. It already
+# bundles libnccl2 (held) and libcudart/libcublas, which libggml-cuda.so links.
+# The only missing runtime dep is libgomp1 (OpenMP runtime for libggml-cpu.so).
+FROM nvidia/cuda:12.6.2-runtime-ubuntu24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# build/bin holds the binaries plus the libggml*/libllama*/libmtmd .so files they
+# link against (built with RUNPATH=/build/bin). Copy them all in so the image is
+# self-contained; LD_LIBRARY_PATH points at the same directory.
+COPY build/bin/ /app/bin/
+
+ENV PATH="/app/bin:${PATH}" \
+    LD_LIBRARY_PATH="/app/bin"
+
+WORKDIR /app
