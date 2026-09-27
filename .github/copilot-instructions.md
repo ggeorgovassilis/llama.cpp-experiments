@@ -42,3 +42,4 @@ This repository is a fork of the original project which attempts at increasing G
 - Smoke: `ssh rig1.local 'cd ~/llamacpp-experiments && ./scripts/run.sh'`
 - CPU flags: rig1 is Sandy Bridge (AVX only). `GGML_NATIVE=OFF` defaults AVX2/FMA/F16C/BMI2 ON, which SIGILLs. Set `-DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF`.
 - GPU flags: `-DCMAKE_CUDA_ARCHITECTURES=50` (Maxwell sm_50 only), `-DGGML_CUDA=ON -DGGML_CUDA_CUB_3DOT2=ON`; base image `nvidia/cuda:12.6.2-devel-ubuntu24.04` (CUDA 13 dropped sm_50).
+- Think carefully about running llamacpp docker container with/without the `-t` and `-i` parameters. We've observed that they get stuck in loops spamming `>` because they expect a user interaction.
