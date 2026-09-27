@@ -1,6 +1,6 @@
 # Pipeline parallelism in llama.cpp: mechanism, diagnostics, baseline
 
-Status: phases 1-3 complete. Phases 4-5 pending (blocked on experiment infra, ticket #1).
+Status: complete (phases 1-5). Results: `pipeline-parallelism-baseline.md`.
 
 Tracked by: issue #2.
 
@@ -202,6 +202,7 @@ For N in {1, 4, 8, 16}: submit N concurrent requests, each a fixed prompt with a
 - Phase 1: analysis of the parallelism mechanism (this document).
 - Phase 2: diagnostics decision (section 3).
 - Phase 3: baseline benchmark design (section 4).
-- Phase 4 (pending, blocked on infra): execute the baseline on rig1, record times,
-  utilisation and correctness.
-- Phase 5 (pending): write up the baseline results in `docs/experiments/`.
+- Phase 4 (complete): executed the baseline on rig1 with Qwen3.5-9B-Q4_K_M; recorded
+  times, utilisation and correctness.
+- Phase 5 (complete): wrote up the baseline results in
+  `docs/experiments/pipeline-parallelism-baseline.md`.
