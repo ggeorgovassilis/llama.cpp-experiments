@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Run llama-server from the runtime image.
+# All arguments are forwarded directly to llama-server in the container.
+#
+# Usage:
+#   ./llama-server -m /models/gemma-4-E2B-it-Q6_K.gguf
+#   ./llama-server --models-preset /models.ini
+#
+# Env overrides:
+#   IMAGE           Runtime image (default: llamacpp-exp:true-pipeline)
+#   MODELS_DIR      Host models dir, mounted at /models (default: /mnt/ssd2/models)
+#   MODELS_INI      Host models.ini, mounted at /models.ini (optional)
+#   HOST_PORT       Port on the host (default: 8080)
+#   CONTAINER_PORT  Port inside the container (default: 8080)
+#   NETWORK         Docker network to attach (optional)
+#   CONTAINER_NAME  Container name (default: llama-server)
+set -euo pipefail
+
+IMAGE="${IMAGE:-llamacpp-exp:true-pipeline}"
+MODELS_DIR="${MODELS_DIR:-/mnt/ssd2/models}"
+HOST_PORT="${HOST_PORT:-8080}"
+CONTAINER_PORT="${CONTAINER_PORT:-8080}"
+CONTAINER_NAME="${CONTAINER_NAME:-llama-server}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [[ ! -d "$MODELS_DIR" ]]; then
+    echo "==> Warning: model directory '$MODELS_DIR' not found." >&2
+fi
+
+declare -a ARGS=(
+    --gpus all
+    --shm-size 2gb
+    --ipc=host
+    --ulimit memlock=-1:-1
+    -v "$MODELS_DIR:/models:ro"
+)
+
+if [[ -n "${MODELS_INI:-}" && -f "$MODELS_INI" ]]; then
+    ARGS+=(-v "$MODELS_INI:/models.ini:ro")
+fi
+
+if [[ -n "${NETWORK:-}" ]]; then
+    ARGS+=(--network "$NETWORK")
+fi
+
+ARGS+=(-p "$HOST_PORT:$CONTAINER_PORT")
+
+if ! docker image inspect "$IMAGE" &>/dev/null; then
+    echo "==> Pulling image: $IMAGE"
+    docker pull "$IMAGE"
+fi
+
+exec docker run --rm -it --name "$CONTAINER_NAME" "${ARGS[@]}" "$IMAGE" llama-server "$@"

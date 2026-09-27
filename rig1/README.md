@@ -13,9 +13,13 @@ tests everything inside Docker.
 ```
 src/                     fresh clone of ggeorgovassilis/llama.cpp-experiments (branch true-pipeline)
 docker/Dockerfile.build  build image (nvidia/cuda:12.6.2-devel-ubuntu24.04 + deps)
+docker/Dockerfile.runtime runtime image (bundles the built binaries)
 scripts/build.sh         configure + build (CUDA sm_50 + AVX) inside Docker
+scripts/build-runtime.sh build the runtime image
 scripts/test.sh          run fast unit tests inside Docker
 scripts/run.sh           smoke test: load a small model on GPU, generate tokens
+scripts/llama-server     run llama-server from the runtime image
+scripts/llama-cli        run llama-cli from the runtime image
 build/                   build output (bind-mounted, persists across runs)
 .ccache/                 ccache store (persists across runs)
 ```
@@ -55,6 +59,8 @@ Sandy Bridge. Only SSE4.2 + AVX are safe.
 ./scripts/test.sh             # run fast unit tests (ctest)
 ./scripts/run.sh              # smoke test with a small model (Qwen3.5-0.8B)
 ./scripts/run.sh gemma-4-E2B-it-Q6_K.gguf 32   # pick model + token count
+./scripts/build-runtime.sh    # build the runtime image (bundles binaries)
+./scripts/llama-server -m /models/gemma-4-E2B-it-Q6_K.gguf   # run the server
 ```
 
 CUDA kernel validation (`test-backend-ops`) is built but not registered as a
@@ -69,6 +75,17 @@ ssh rig1.local 'docker run --rm --gpus all -v ~/llamacpp-experiments/build:/buil
 - `llama-cli` defaults to interactive chat and loops on the `>` prompt forever
   against a closed stdin. Pass `--single-turn` (run.sh already does) or it
   spins at 100% CPU spamming `> `.
+
+## Runtime image
+
+The runtime image `llamacpp-exp:true-pipeline` bundles the built binaries so the
+branch can run without the build toolchain. See `docs/experiments/runtime-image.md`.
+
+```sh
+./scripts/build-runtime.sh    # build it (runs build.sh first if binaries are missing)
+./scripts/llama-server -m /models/gemma-4-E2B-it-Q6_K.gguf
+./scripts/llama-cli -m /models/Qwen3.5-0.8B-Q8_0.gguf -p "hello" -n 8 --single-turn
+```
 
 ## Notes
 

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Run llama-cli from the runtime image.
+# All arguments are forwarded directly to llama-cli in the container.
+#
+# Usage:
+#   ./llama-cli -m /models/Qwen3.5-0.8B-Q8_0.gguf -p "hello" -n 8 --single-turn
+#
+# Note: llama-cli defaults to interactive chat and loops on the `>` prompt
+# forever against a closed stdin. Pass --single-turn (and --no-display-prompt)
+# for batch use.
+#
+# Env overrides:
+#   IMAGE           Runtime image (default: llamacpp-exp:true-pipeline)
+#   MODELS_DIR      Host models dir, mounted at /models (default: /mnt/ssd2/models)
+#   NETWORK         Docker network to attach (optional)
+#   CONTAINER_NAME  Container name (default: llama-cli)
+set -euo pipefail
+
+IMAGE="${IMAGE:-llamacpp-exp:true-pipeline}"
+MODELS_DIR="${MODELS_DIR:-/mnt/ssd2/models}"
+CONTAINER_NAME="${CONTAINER_NAME:-llama-cli}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [[ ! -d "$MODELS_DIR" ]]; then
+    echo "==> Warning: model directory '$MODELS_DIR' not found." >&2
+fi
+
+declare -a ARGS=(
+    --gpus all
+    --shm-size 2gb
+    --ipc=host
+    --ulimit memlock=-1:-1
+    -v "$MODELS_DIR:/models:ro"
+)
+
+if [[ -n "${NETWORK:-}" ]]; then
+    ARGS+=(--network "$NETWORK")
+fi
+
+if ! docker image inspect "$IMAGE" &>/dev/null; then
+    echo "==> Pulling image: $IMAGE"
+    docker pull "$IMAGE"
+fi
+
+exec docker run --rm -it --name "$CONTAINER_NAME" "${ARGS[@]}" "$IMAGE" llama-cli "$@"
