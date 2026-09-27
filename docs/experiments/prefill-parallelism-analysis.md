@@ -1,6 +1,7 @@
 # Prefill parallelisation in layer-split models: mechanism analysis
 
-Status: analysis complete. Tracked by: issue #8.
+Status: corrected after baseline measurement (see `prefill-parallelism-baseline.md`).
+Tracked by: issue #8.
 Companion analysis (decode path): `pipeline-parallelism-analysis.md`.
 
 ---
@@ -19,11 +20,12 @@ The three open questions resolve as follows:
 
 - Prefill is chunked: a sequence of `n_ubatch`-sized sub-batches, each with the same
   4-5-split layer pipeline as decode.
-- Consecutive prefill sub-batches do NOT overlap in the current code. The server does
-  skip its sync while `has_output` is false, but the graph-reuse path in
-  `llama_context::process_ubatch` re-introduces a full `ggml_backend_sched_synchronize`
-  between same-shape sub-batches whenever `pipeline_parallel` is on. That barrier is
-  the actual blocker, not the server.
+- Consecutive prefill sub-batches DO overlap in the current code. The server skips its
+  sync while `has_output` is false, and the graph-reuse sync in
+  `llama_context::process_ubatch` never fires during prefill: `can_reuse` is false
+  because the attention KQ mask grows with every sub-batch (section 3.2). The
+  `cur_copy`/`next_copy` overlap therefore materialises. Verified empirically in
+  `prefill-parallelism-baseline.md` (reuse on/off identical; all 4 GPUs reach 100% SM).
 - The bottleneck is compute (matmul), not cross-GPU transfer.
 
 ## 2. How prefill is represented in the graph splits
@@ -48,9 +50,10 @@ CPU/logits tail depending on offload). The ubatch differs from decode only in th
 number of tokens per split (512 vs 1), so the split *count* is the same but the
 matmuls inside each split are larger.
 
-## 3. Why consecutive prefill sub-batches do not overlap
+## 3. Prefill sub-batches overlap (the reuse sync does not fire)
 
-There are two candidate sync points between consecutive prefill ubatches.
+There are two candidate sync points between consecutive prefill ubatches. Only the
+server one was ever in question, and it does not fire for prefill.
 
 ### 3.1 The server sync (does not fire for prefill)
 
@@ -76,7 +79,7 @@ true)` when the prompt is done). So intermediate prefill batches have `has_outpu
 false` and skip the sync. The server does not block overlap between intermediate
 prefill sub-batches.
 
-### 3.2 The graph-reuse sync (the actual blocker)
+### 3.2 The graph-reuse sync (does not fire for prefill)
 
 `src/llama-context.cpp`, `process_ubatch` (~line 1411):
 
@@ -94,32 +97,35 @@ if (!graph_reuse_disable && gf_res_prev_active == res && res->can_reuse(gparams)
 
 There are two graph-result slots, `gf_res_prev[n_outputs > 0]` (see `get_gf_res_prev`,
 ~line 2424): slot 0 for ubatches with no outputs (intermediate prefill), slot 1 for
-ubatches with outputs (decode, and the final prefill ubatch). Consecutive same-size
-prefill ubatches all land in slot 0, have identical topology, so `can_reuse` is true and
-the graph is reused. When `pipeline_parallel` is on (which it is for a layer split with
-all layers on GPU, per issue #2), the reuse path issues a full
-`ggml_backend_sched_synchronize` before overwriting the inputs.
+ubatches with outputs (decode, and the final prefill ubatch). For the reuse branch to
+fire, `res->can_reuse(gparams)` must be true. For a dense model the attention input's
+`can_reuse` ends in `can_reuse_kq_mask` (`src/llama-graph.cpp`, ~line 48):
 
-`ggml_backend_sched_synchronize` (`ggml/src/ggml-backend.cpp`, ~line 2033) synchronises
-every backend: a full barrier. Because the graph is reused, `ggml_backend_sched_alloc_graph`
-is not called again, so the `cur_copy`/`next_copy` rotation never advances and the same
-buffer copy is reused every sub-batch. Net effect: consecutive prefill sub-batches are
-strictly serialised, using one buffer copy.
+```c
+const auto n_kv = mctx->get_n_kv();
+...
+res &= (kq_mask->ne[0] == n_kv);
+```
 
-This barrier fires both between ubatches *within* one `llama_decode` and between the last
-ubatch of one `llama_decode` and the first of the next (same slot 0, same shape). So the
-copies/events overlap that the scheduler provides (documented in
-`pipeline-parallelism-analysis.md`, section 2.4) never materialises during prefill.
+`n_kv` is the padded KV occupancy (`llama_kv_cache::get_n_kv`,
+`src/llama-kv-cache.cpp`, ~line 1250) and grows with every prefill sub-batch: 512 ->
+1024 -> 1536 -> ... . The graph built for sub-batch N has `kq_mask->ne[0] == n_kv(N)`,
+which is never equal to `n_kv(N+1)`, so `can_reuse` is false and every prefill sub-batch
+is freshly allocated (`res->reset()` + `ggml_backend_sched_alloc_graph`). The
+`cur_copy`/`next_copy` rotation therefore advances every sub-batch, and the copies/events
+overlap described in `pipeline-parallelism-analysis.md` section 2.4 materialises during
+prefill.
 
-### 3.3 The one case where the copies overlap could fire
+This is the key asymmetry with decode: decode adds one token per step, so `n_kv` stays
+inside the same 256-token padding block for many consecutive steps and the graph IS
+reused (and the reuse sync fires). Prefill crosses a 256 boundary every sub-batch, so it
+never reuses.
 
-The copies rotation advances only when a graph is freshly allocated (topology changes,
-`graph_reuse_disable`, or the switch between slot 0 and slot 1). The only prefill ubatch
-that differs in shape is the final, partial one (e.g. 464 tokens out of 512). If
-`LLAMA_GRAPH_REUSE_DISABLE=1` is set, every ubatch is rebuilt and reallocated, the
-`cur_copy`/`next_copy` rotation advances each time, and consecutive ubatches use distinct
-buffer/event slots - the precondition for pipeline overlap. This is the natural first
-experiment.
+### 3.3 Disabling graph reuse is a no-op for prefill
+
+Because `can_reuse` is already false for prefill, `LLAMA_GRAPH_REUSE_DISABLE=1` changes
+nothing. This was the first experiment and it confirmed the prediction exactly
+(`prefill-parallelism-baseline.md`): prefill tok/s is unchanged with reuse on vs off.
 
 ## 4. Bottleneck: compute vs transfer
 
@@ -135,24 +141,22 @@ Prefill is compute-bound (matmul), not transfer-bound.
   (each ~1-2 TFLOP effective for Q4_K_M int8 matmuls). Compute dominates by two orders of
   magnitude.
 
-The under-utilisation observed in issue #2 is a pipeline (data dependency + the reuse
-sync) problem, not a bandwidth problem. Parallelising prefill therefore means pipelining
-across sub-batches (or requests), not reducing transfer volume.
+The under-utilisation observed in issue #2 is a pipeline problem (data dependency, plus
+the reuse sync that only fires during decode), not a bandwidth problem. Prefill already
+pipelines across sub-batches (verified in `prefill-parallelism-baseline.md`); the
+remaining headroom is layer balance and pipeline bubbles, not transfer volume.
 
-## 5. Next steps (baseline phase, tracked in issue #8)
+## 5. Result (baseline phase, tracked in issue #8)
 
-1. Confirm the reuse-sync is active: run a layer-split model on rig1 and check the
-   startup log for `pipeline parallelism enabled` / `sched copies = 4`, then observe
-   per-GPU SM during a single long prefill (expect the one-GPU-at-a-time signature, with
-   a visible stall at each sub-batch boundary from the full synchronise).
-2. Baseline prefill throughput (tokens/s) for a ~30B dense Q4_K_M model across the 4x
-   M10, single request, using the `bench/` harness extended with a prompt-eval-only mode
-   (`n_predict = 1`).
-3. Re-run with `LLAMA_GRAPH_REUSE_DISABLE=1` and measure whether prefill throughput
-   improves (tests the pipeline-overlap hypothesis without code changes).
-4. If that shows promise, prototype a targeted fix (skip the reuse sync for the
-   non-output prefill slot, or force fresh allocation per prefill ubatch) and re-measure.
+The baseline was measured on rig1 and is recorded in
+`prefill-parallelism-baseline.md`. Summary:
 
-Model selection follows issue #2's decision criteria (dense, clean 1:1 layer split);
-candidates from the rig1 catalogue are NVIDIA-Nemotron-3.5-Lightning-30B or the
-Qwen3.5-30B class, with Qwen3.5-9B-Q4_K_M as the light fallback already validated in #2.
+1. The reuse sync is NOT active during prefill (section 3.2). Startup shows
+   `pipeline parallelism enabled` / `sched copies = 4`, and all 4 GPUs reach 100% SM
+   simultaneously during a single long prefill - overlap is already happening.
+2. Prefill tok/s (Qwen3.5-9B-Q4_K_M, layer split, K=1): 63 (512 tok), 70 (1024), 95
+   (2048), 125 (4096), 154 (8192).
+3. `LLAMA_GRAPH_REUSE_DISABLE=1` changes nothing (reuse never fires during prefill).
+4. Conclusion: prefill is already parallelised across the 4 GPUs; there is no reuse
+   barrier to remove. Remaining headroom is layer imbalance and pipeline bubbles, a
+   separate question.
