@@ -16,7 +16,7 @@ Three things assumed in the earlier write-ups are wrong:
 
 - Flash attention DOES run on sm_50. `FLASH_ATTN_AVAILABLE` is on by default and `ggml_cuda_get_best_fattn_kernel` falls back to the generic TILE/VEC kernels when there are no tensor cores. The `-sm tensor` flash-attn gate is satisfiable on rig1.
 - `llm_arch_supports_sm_tensor` returns true for the qwen3 family.
-- The real `-sm tensor` constraint is the allreduce, not flash-attn. Comm init is nccl -> internal -> butterfly. NCCL is not compiled in (`GGML_CUDA_NCCL=OFF`); internal allreduce needs cc >= Volta AND exactly 2 devices (rig1 is sm_50 x 4). Tensor mode therefore lands on the host-mediated butterfly allreduce. Slow but functional, and not the bottleneck for the models tested.
+- The real `-sm tensor` constraint is the allreduce, not flash-attn. Comm init is nccl -> internal -> butterfly. NCCL is compiled in by default (`GGML_CUDA_NCCL` is ON and `libnccl-dev` ships in the build image), but `ncclCommInitAll` fails at runtime on sm_50 (`cudaMemPoolCreate` -> `cudaErrorNotSupported`, no CUDA VMM); the internal allreduce needs cc >= Volta AND exactly 2 devices (rig1 is sm_50 x 4). Tensor mode therefore lands on the host-mediated butterfly allreduce. Slow but functional, and not the bottleneck for the models tested. See `pipeline-parallelism-nccl.md` (issue #11).
 
 ## Method
 
@@ -63,8 +63,8 @@ Sharding the output head is the right lever, and it is already implemented as `-
 
 ## Open questions
 
-- Does `-sm tensor` scale with K (2, 4), or does the shared meta device serialise the contexts?
-- Is NCCL worth enabling (bigger models / higher allreduce volume)?
+- Does `-sm tensor` scale with K (2, 4), or does the shared meta device serialise the contexts? Answered in #11: flat over K (15.83 -> 16.58 tok/s, +4.7%) because tensor parallelism already uses all 4 GPUs per token. See `pipeline-parallelism-nccl.md`.
+- Is NCCL worth enabling (bigger models / higher allreduce volume)? Answered in #11: no - NCCL cannot initialise on sm_50 (no CUDA VMM). See `pipeline-parallelism-nccl.md`.
 - Is gemma4 tensor-split support worth a follow-up?
 
 ## Related
