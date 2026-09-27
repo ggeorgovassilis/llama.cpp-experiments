@@ -87,6 +87,50 @@ of graph N+1 can overlap the still-running graph N. This is the actual pipeline
 parallelism: with 4 copies the work is double-buffered (quad-buffered) across decode
 steps.
 
+Each decode's 32 layers are split into four slices (one per GPU). Serial execution (the
+stock server) finishes one whole decode before the next begins:
+
+```mermaid
+gantt
+    title Layer pipeline, serial: one decode in flight at a time
+    dateFormat X
+    axisFormat %s
+    section GPU0
+    decode N   layers 1-8   :a1, 0, 2
+    decode N+1 layers 1-8   :a2, 8, 2
+    section GPU1
+    decode N   layers 9-16  :b1, 2, 2
+    decode N+1 layers 9-16  :b2, 10, 2
+    section GPU2
+    decode N   layers 17-24 :c1, 4, 2
+    decode N+1 layers 17-24 :c2, 12, 2
+    section GPU3
+    decode N   layers 25-32 :d1, 6, 2
+    decode N+1 layers 25-32 :d2, 14, 2
+```
+
+With `n_copies = 4`, successive decodes use different buffer/event copies, so decode
+N+1's head starts on GPU0 while decode N's tail is still running on GPU2/GPU3:
+
+```mermaid
+gantt
+    title Layer pipeline, overlap: N+1 starts before N finishes
+    dateFormat X
+    axisFormat %s
+    section GPU0
+    decode N   layers 1-8   :a1, 0, 2
+    decode N+1 layers 1-8   :a2, 2, 2
+    section GPU1
+    decode N   layers 9-16  :b1, 2, 2
+    decode N+1 layers 9-16  :b2, 4, 2
+    section GPU2
+    decode N   layers 17-24 :c1, 4, 2
+    decode N+1 layers 17-24 :c2, 6, 2
+    section GPU3
+    decode N   layers 25-32 :d1, 6, 2
+    decode N+1 layers 25-32 :d2, 8, 2
+```
+
 ### 2.5 Enablement conditions
 
 In `src/llama-context.cpp` (~line 428) `pipeline_parallel` is true iff all hold:

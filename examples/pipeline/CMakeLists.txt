@@ -1,0 +1,11 @@
+set(TARGET llama-pipeline)
+add_executable(${TARGET} pipeline.cpp)
+install(TARGETS ${TARGET} RUNTIME)
+target_link_libraries(${TARGET} PRIVATE llama-common llama ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET_CHAIN llama-chain)
+add_executable(${TARGET_CHAIN} chain.cpp)
+install(TARGETS ${TARGET_CHAIN} RUNTIME)
+target_link_libraries(${TARGET_CHAIN} PRIVATE llama-common llama ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET_CHAIN} PRIVATE cxx_std_17)

@@ -453,6 +453,12 @@ llama_context::llama_context(
             }
         }
 
+        // env override to force pipeline parallelism off (control experiment, issue #7)
+        const char * LLAMA_PIPELINE_PARALLEL = getenv("LLAMA_PIPELINE_PARALLEL");
+        if (LLAMA_PIPELINE_PARALLEL && atoi(LLAMA_PIPELINE_PARALLEL) == 0) {
+            pipeline_parallel = false;
+        }
+
         cparams.pipeline_parallel = pipeline_parallel;
 
         if (cparams.pipeline_parallel) {
